@@ -1,0 +1,30 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Token Radar — pre-token protocols ranked by implied value</title>
+<link rel="stylesheet" href="app.css">
+</head>
+<body>
+<header class="masthead">
+  <div class="masthead-inner">
+    <div>
+      <p class="kicker">Token Radar · radar-2 model</p>
+      <h1>Which protocol launches next — and what it would be worth</h1>
+      <p class="lede">Every protocol in the snapshot that records no token, ranked by an implied value calibrated on the tokens that already trade. Click any row to open its model and its farm plan.</p>
+    </div>
+    <dl class="masthead-stats" id="masthead-stats"></dl>
+  </div>
+</header>
+<main id="app" aria-busy="true">
+  <p class="loading">Loading the board…</p>
+</main>
+<footer class="colophon">
+  <p>Implied value is this radar's own estimate from the snapshot's figures — TVL, seven-day growth, age with no token on record, and chain count. It is not a price, a prediction that a token will launch, or advice. “No token” always means “no token on record”: a protocol may still have a token its record does not carry.</p>
+  <p id="colophon-source"></p>
+</footer>
+<script src="../data.js"></script>
+<script src="app.js"></script>
+</body>
+</html>
