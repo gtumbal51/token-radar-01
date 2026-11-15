@@ -1,7 +1,7 @@
 // Token Radar's entrypoint (Node 22, standard library only).
 //
 // It reads the sealed snapshot (from /input/snapshot.json, or --input <file|dir>), scores every
-// rankable pre-token protocol with the radar-3 model in lib/model.ts, and writes the entry's outputs:
+// rankable pre-token protocol with the radar-4 model in lib/model.ts, and writes the entry's outputs:
 //
 //   board.json    the ranked board (every watchlist slug, plus every other rankable protocol)
 //   data.js       the same board, as the dashboard's dataset, with the validation and the comps
@@ -97,7 +97,7 @@ writeFileSync(
 const v = radar.validation;
 process.stdout.write(
   `token radar: ${snapshot.protocols.length} protocols, ${snapshot.watchlist.length} on the watchlist, ${board.length} rows scored (${radar.audit.pre_token} pre-token examined, ${radar.live_size} live set aside)\n` +
-    `token radar: curve log mcap = ${v.curve.intercept.toFixed(4)} + ${v.curve.slope.toFixed(4)} log TVL on ${v.curve.n} traded protocols; out-of-sample median x${v.time_split.median_factor.toFixed(2)} (n=${v.time_split.n}), leave-one-out median x${v.loo.median_factor.toFixed(2)}\n` +
+    `token radar: curve log mcap = ${v.curve.intercept.toFixed(4)} + ${v.curve.slope.toFixed(4)} log TVL, Huber-robust, plus a shrunk category tilt (k=40), on ${v.curve.n} traded protocols; out-of-sample median x${v.time_split.median_factor.toFixed(2)} (n=${v.time_split.n}), leave-one-out median x${v.loo.median_factor.toFixed(2)}\n` +
     `token radar: verdicts on the $1,000 plan: FARM ${radar.verdict_counts.FARM}, THIN ${radar.verdict_counts.THIN}, SKIP ${radar.verdict_counts.SKIP}; best per hands-on hour ${radar.best_per_hour.name} $${radar.best_per_hour.net_per_hour}/h\n` +
     `token radar: wrote ${join(out, 'board.json')}, ${join(out, 'data.js')}, ${join(out, 'dashboard')} (${dashFiles.length} files), ${join(out, 'screenshots')} (${shots.length} images) and ${join(out, 'dossier.json')}\n`,
 );

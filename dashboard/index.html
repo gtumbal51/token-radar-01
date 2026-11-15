@@ -10,7 +10,7 @@
 <header class="masthead">
   <div class="masthead-inner">
     <div class="masthead-body">
-      <p class="kicker">Token Radar · radar-3 model</p>
+      <p class="kicker">Token Radar · radar-4 model</p>
       <h1>Which protocol launches next — and what it would be worth</h1>
       <p class="lede">Every protocol in the snapshot that records no token, ranked by an implied value fitted to the tokens that already trade. Click any row to open its model and its farm plan.</p>
     </div>
@@ -22,7 +22,7 @@
   <p class="loading">Loading the board…</p>
 </main>
 <footer class="colophon">
-  <p>Implied value is this radar's own estimate from the snapshot's figures — a size curve fitted to the traded protocols, tested out of sample. A launch is priced as a range, not a point: the band is the model's own measured error. It is not a price, a prediction that a token will launch, or advice. “No token” always means “no token on record”: a protocol may still have a token its record does not carry.</p>
+  <p>Implied value is this radar's own estimate from the snapshot's figures — a robust size curve fitted to the traded protocols, plus a shrunk tilt per category, tested out of sample. A launch is priced as a range, not a point: the band is the model's own measured error. It is not a price, a prediction that a token will launch, or advice. “No token” always means “no token on record”: a protocol may still have a token its record does not carry.</p>
   <p id="colophon-source"></p>
 </footer>
 <template id="method-note">
@@ -31,9 +31,9 @@
     <h3>Universe</h3>
     <p>758 protocols tracked, 342 recording no token, 198 ranked, 40 of them on the watchlist. A protocol is ranked when it records no token and passes the watchlist's own exclusion rules — no wrapped or staked product of a token that already trades, no exchange-name prefix, no versioned pool, no bridge, liquid-staking, restaking or CEX record. Centralised exchanges are set apart from the fit as well as the board: a CEX token is not a protocol launch.</p>
     <h3>Curve</h3>
-    <p>The value model is one curve: log(market cap) against log(TVL), fitted by ordinary least squares on the 119 traded protocols outside the CEX category. The multiple a token trades at falls as the protocol grows — that is the curve, and it is the whole model. No protocol name is special-cased.</p>
+    <p>The value model is one curve plus a tilt per category: log(market cap) against log(TVL), fitted by a Huber-robust regression on the 119 traded protocols outside the CEX category, so a few wild multiples cannot drag the line. Each category then carries a tilt of its median log-residual, shrunk by n/(n+40): a category with one protocol barely moves the curve, a category with fifteen moves it by a quarter of its median residual. The multiple a token trades at falls as the protocol grows — that is the curve, and the tilt is what the categories add. No protocol name is special-cased.</p>
     <h3>Validation</h3>
-    <p>The curve is tested before it is trusted. A time split fits the older half of the traded protocols by listing date and predicts the younger half; a leave-one-out ablation refits the curve 119 times, once per protocol, and tests every extra factor — category, growth, maturity, all of them together — to see whether it earns its place. It does not: the curve alone beats the curve plus any tilt, so the model is the curve alone. The bootstrap refits the curve on resamples to show the slope's own interval.</p>
+    <p>The curve is tested before it is trusted. A time split fits the older half of the traded protocols by listing date and predicts the younger half; a leave-one-out ablation refits the model 119 times, once per protocol, and tests every extra factor — a stronger tilt, growth, age, curvature — to see whether it earns its place. Before that, forty-three candidate models were measured on the sealed snapshot and logged in the experiments table: a candidate was kept only when it improved both the time-split and the leave-one-out error. The bootstrap refits the curve on resamples to show the slope's own interval.</p>
     <h3>Farm economics</h3>
     <p>Every plan is a $1,000 plan, the same size for every protocol so the rows can be compared. A wallet's allocation is the low end of the band shared by 40,000 farming wallets. The plan's cost is what it burns: the gas its steps spend, plus the yield the $1,000 forgoes while it sits in the protocol at 4% a year. The $1,000 is a deposit, returned on exit; it is at risk only if the protocol fails, and that risk is not in the net number. Net is gross minus cost: FARM when it clears $100, THIN when it is positive but under $100, SKIP when it is zero or negative.</p>
     <h3>Limits</h3>

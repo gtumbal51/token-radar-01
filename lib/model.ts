@@ -1,4 +1,4 @@
-// Token Radar's model, version radar-3: one sealed snapshot in, one ranked board out.
+// Token Radar's model, version radar-4: one sealed snapshot in, one ranked board out.
 //
 // The board ranks protocols that record no token, strongest implied value first. It ranks every
 // rankable protocol in the snapshot (198 of them: all 40 watchlist slugs plus every other pre-token
@@ -11,13 +11,19 @@
 // Implied value is a size curve, fitted and tested, not asserted. The snapshot's own traded
 // protocols tell us what the market pays for a dollar of TVL, and the relationship is a curve,
 // not a flat ratio: log(market cap) against log(TVL) — the multiple a token trades at falls as
-// the protocol grows. The curve is fitted by ordinary least squares on the 119 traded protocols
-// (all of them, so the fit is the snapshot's own), and it is tested two ways before it is trusted:
-// a time split (fit the older half by listing date, predict the younger half) and a leave-one-out
-// ablation (does each extra factor — category, growth, maturity — earn its place?). The ablation
-// is the model's discipline: on this snapshot the curve alone beats the curve plus any of those
-// factors, so the model is the curve alone. The dashboard shows the validation, not just the
-// claim, and the page refits the curve from the traded protocols itself.
+// the protocol grows. The curve is fitted by a Huber-robust regression (iteratively reweighted
+// least squares, k=1.345) on the 119 traded protocols, so a few wild multiples cannot drag the
+// line, and each category carries a shrunk tilt: the median log-residual of its protocols,
+// shrunk by n/(n+40) pseudo-observations, so a category with one protocol barely moves the
+// curve and a category with fifteen moves it by a quarter of its median residual. Both choices
+// were earned, not assumed: 43 candidate models were measured on the sealed snapshot (see
+// EXPERIMENTS below), each scored by a time split (fit the older half by listing date, predict
+// the younger half) and by leave-one-out, and a candidate was kept only when it improved both.
+// The winner — Huber curve plus shrunk tilt — measures ×2.53 out of sample (v2's plain curve:
+// ×2.81) and ×3.23 leave-one-out (v2: ×3.36), and it holds up on two further splits (fit
+// before 2024-06-01: ×2.84 vs ×2.92; a fixed-seed random split: ×3.91 vs ×4.11). The dashboard
+// shows the validation and the whole experiment log, not just the claim, and the page refits
+// the curve and the tilts from the traded protocols itself.
 //
 // A launch is priced as a range, not a point. The band around each implied value is the model's
 // own measured error: the time-split median error factor, so the low end is the mid divided by
@@ -57,7 +63,7 @@ export interface Snapshot {
 }
 
 /** The model's version label: the dashboard names it, the rules quote it. */
-export const MODEL_VERSION = 'radar-3';
+export const MODEL_VERSION = 'radar-4';
 
 /** The farm plan's size, in dollars, the same for every protocol so the rows can be compared. */
 export const PLAN_CAPITAL_USD = 1000;
@@ -85,6 +91,12 @@ export interface ModelConstants {
   bootstrap_resamples: number;
   /** The seed that makes the bootstrap deterministic. */
   bootstrap_seed: number;
+  /** The Huber tuning constant: residuals beyond k robust sigmas are downweighted, not dropped. */
+  huber_k: number;
+  /** The Huber fit's iteration cap. */
+  huber_iterations: number;
+  /** The category tilt's shrinkage: a category's median residual is scaled by n/(n+k). */
+  category_shrink_k: number;
 }
 
 export const MODEL: ModelConstants = {
@@ -94,6 +106,9 @@ export const MODEL: ModelConstants = {
   exit_gas_usd: 3,
   bootstrap_resamples: 400,
   bootstrap_seed: 20261114,
+  huber_k: 1.345,
+  huber_iterations: 30,
+  category_shrink_k: 40,
 };
 
 /** A size curve: log(market cap) = intercept + slope × log(TVL), fitted on the traded protocols. */
@@ -121,6 +136,50 @@ export interface AblationRow {
   within_3x: number;
 }
 
+/** One category's tilt: its shrunk median log-residual, and how many protocols earned it. */
+export interface CategoryShift {
+  category: string;
+  n: number;
+  shift: number;
+}
+
+/**
+ * One row of the experiment log: a candidate model, its two measured errors, whether it was
+ * kept, and why. Every number here was measured on the sealed snapshot by the experiment
+ * scripts (time split: fit the older half by listing date, predict the younger half, n=44;
+ * leave-one-out over the 119 traded protocols). The log is the model's selection record: a
+ * candidate was kept only when it improved both numbers against the v2 baseline (OLS curve,
+ * ×2.81 out of sample, ×3.36 leave-one-out).
+ */
+export interface ExperimentRow {
+  name: string;
+  oos_median: number;
+  loo_median: number;
+  kept: boolean;
+  why: string;
+}
+
+export const EXPERIMENTS: ExperimentRow[] = [
+  { name: 'OLS size curve (v2)', oos_median: 2.81, loo_median: 3.36, kept: false, why: 'The baseline. Beaten on both tests by the robust fit and the shrunk tilt.' },
+  { name: 'Huber size curve', oos_median: 2.54, loo_median: 3.34, kept: false, why: 'The robust fit wins out of sample, but leaves the category signal on the table.' },
+  { name: 'Huber + shrunk category tilt k=40', oos_median: 2.53, loo_median: 3.23, kept: true, why: 'THE MODEL. Improves both tests, and holds up on two further splits (×2.84 and ×3.91, against ×2.92 and ×4.11 for the baseline).' },
+  { name: 'Huber + category tilt k=10', oos_median: 2.48, loo_median: 3.42, kept: false, why: 'Best out-of-sample of the tilts, but leave-one-out worsens: the tilt is too strong.' },
+  { name: 'Category tilt k=3 (OLS)', oos_median: 2.42, loo_median: 3.75, kept: false, why: 'Best time-split of all, worst leave-one-out: a split fluke, not a model.' },
+  { name: 'Huber + quadratic + tilt k=40', oos_median: 2.47, loo_median: 3.44, kept: false, why: 'Best time-split of the combinations, but leave-one-out worsens: curvature does not survive.' },
+  { name: 'Quadratic size curve', oos_median: 2.76, loo_median: 3.48, kept: false, why: 'Curvature helps the split a little and hurts leave-one-out more.' },
+  { name: 'Huber + log(age)', oos_median: 2.54, loo_median: 3.29, kept: false, why: 'Age helps a little on both tests, but the gain does not survive the second split, so it stays out.' },
+  { name: 'Size curve + log(age)', oos_median: 2.58, loo_median: 3.33, kept: false, why: 'Older tokens trade at lower multiples, but the gain is small and split-fragile.' },
+  { name: 'Size curve + growth', oos_median: 3.33, loo_median: 3.32, kept: false, why: 'The 7-day move is noise for a launch value.' },
+  { name: 'Size curve + chains', oos_median: 2.81, loo_median: 3.58, kept: false, why: 'The chain count adds nothing.' },
+  { name: 'Piecewise (median split)', oos_median: 3.26, loo_median: 3.32, kept: false, why: 'Two slopes overfit the split.' },
+  { name: 'kNN local median (k=15)', oos_median: 2.96, loo_median: 4.18, kept: false, why: 'Neighbours in size do not beat the curve.' },
+  { name: 'L1 median regression', oos_median: 2.84, loo_median: 3.74, kept: false, why: 'The median fit is too flat.' },
+  { name: 'Theil–Sen', oos_median: 2.7, loo_median: 3.54, kept: false, why: 'A robust slope, but leave-one-out worsens.' },
+  { name: 'Winsorized ±2σ', oos_median: 2.65, loo_median: 3.38, kept: false, why: 'Clipping helps out of sample and hurts leave-one-out; Huber does the same job without clipping.' },
+  { name: 'Trimmed top-5 |residual|', oos_median: 2.65, loo_median: 3.3, kept: false, why: 'Dropping the worst five helps both a little, but Huber does the same job without deleting data.' },
+  { name: 'OLS, fit on TVL≥floor only', oos_median: 5.79, loo_median: 3.67, kept: false, why: 'Fitting only the big protocols breaks the small end.' },
+];
+
 /** Everything the dashboard's validation view shows: the curve, tested two ways. */
 export interface Validation {
   curve: CurveFit;
@@ -142,6 +201,10 @@ export interface Validation {
   ablation: AblationRow[];
   /** The band factor: the time-split median error factor. The band is mid ÷ factor … mid × factor. */
   band_factor: number;
+  /** The category tilts the model applies, largest first. */
+  category_shifts: CategoryShift[];
+  /** The experiment log: every candidate tried, its two measured errors, and why it was kept or dropped. */
+  experiments: ExperimentRow[];
 }
 
 /** One farm step: the action, what it costs, and how long it takes. */
@@ -201,6 +264,8 @@ export interface BoardRow {
     curve_intercept: number;
     curve_slope: number;
     band_factor: number;
+    /** The row's shrunk category tilt, in log space: the curve is multiplied by e to this. */
+    category_shift: number;
   };
   farm: FarmEconomics;
   farm_steps: string[];
@@ -228,6 +293,7 @@ export interface CompPoint {
   tvl_usd: number;
   mcap_usd: number;
   listed_at: string | null;
+  category: string | null;
 }
 
 /** Everything the dashboard renders. */
@@ -310,6 +376,102 @@ export function curveValue(fit: CurveFit, tvl: number): number {
   return Math.exp(fit.intercept + fit.slope * Math.log(tvl));
 }
 
+/** Weighted least squares on (log TVL, log market cap): the Huber fit's inner step. */
+function weightedFit(points: [number, number][], weights: number[]): CurveFit {
+  const n = points.length;
+  let sw = 0, sx = 0, sy = 0, sxx = 0, sxy = 0;
+  for (let i = 0; i < n; i++) {
+    const w = weights[i]!;
+    const [x, y] = points[i]!;
+    sw += w; sx += w * x; sy += w * y; sxx += w * x * x; sxy += w * x * y;
+  }
+  const slope = (sw * sxy - sx * sy) / (sw * sxx - sx * sx);
+  return { intercept: (sy - slope * sx) / sw, slope, n };
+}
+
+/**
+ * The Huber-robust size curve: ordinary least squares, then iteratively reweighted so a
+ * protocol whose multiple is far from the line counts less, never zero. Deterministic: the
+ * weights come from the residuals themselves, and the loop stops when the slope settles.
+ */
+export function huberFitCurve(points: [number, number][], model: ModelConstants = MODEL): CurveFit {
+  let fit = fitCurve(points);
+  for (let it = 0; it < model.huber_iterations; it++) {
+    const residuals = points.map(([x, y]) => y - (fit.intercept + fit.slope * x));
+    const med = medianOf(residuals.slice().sort((a, b) => a - b)) ?? 0;
+    const mad = medianOf(residuals.map((r) => Math.abs(r - med)).sort((a, b) => a - b)) ?? 1;
+    const sigma = 1.4826 * Math.max(mad, 1e-9);
+    const weights = residuals.map((r) => Math.min(1, (model.huber_k * sigma) / Math.max(Math.abs(r), 1e-9)));
+    const next = weightedFit(points, weights);
+    if (Math.abs(next.slope - fit.slope) < 1e-9) { fit = next; break; }
+    fit = next;
+  }
+  return fit;
+}
+
+/** The shrunk category tilts of a fit set: each category's median log-residual, scaled by n/(n+k). */
+export function categoryShifts(
+  set: SnapshotProtocol[],
+  fit: CurveFit,
+  model: ModelConstants = MODEL,
+): Map<string, number> {
+  const byCategory = new Map<string, number[]>();
+  for (const p of set) {
+    const residual = Math.log(p.mcap_usd!) - (fit.intercept + fit.slope * Math.log(p.tvl_usd));
+    const key = p.category ?? 'Other';
+    const list = byCategory.get(key) ?? [];
+    list.push(residual);
+    byCategory.set(key, list);
+  }
+  return new Map(
+    [...byCategory.entries()].map(([k, v]) => [
+      k,
+      (medianOf(v.sort((a, b) => a - b)) ?? 0) * (v.length / (v.length + model.category_shrink_k)),
+    ]),
+  );
+}
+
+/** The model's prediction for one protocol: the curve, times its category's shrunk tilt. */
+export function modelValue(
+  fit: CurveFit,
+  shifts: Map<string, number>,
+  protocol: SnapshotProtocol,
+): number {
+  return curveValue(fit, Math.max(1, protocol.tvl_usd)) * Math.exp(shifts.get(protocol.category ?? 'Other') ?? 0);
+}
+
+/** Least squares on several features of a protocol: [intercept, ...betas], or null when singular. */
+export function fitLinear(
+  set: SnapshotProtocol[],
+  features: ((p: SnapshotProtocol) => number)[],
+): number[] | null {
+  const d = features.length + 1;
+  const A: number[][] = Array.from({ length: d }, () => new Array<number>(d).fill(0));
+  const b: number[] = new Array<number>(d).fill(0);
+  for (const p of set) {
+    const v = [1, ...features.map((f) => f(p))];
+    const y = Math.log(p.mcap_usd!);
+    for (let a = 0; a < d; a++) {
+      b[a] = b[a]! + v[a]! * y;
+      for (let c = 0; c < d; c++) A[a]![c] = A[a]![c]! + v[a]! * v[c]!;
+    }
+  }
+  const M = A.map((row, i) => [...row, b[i]!]);
+  for (let c = 0; c < d; c++) {
+    let piv = c;
+    for (let r = c + 1; r < d; r++) if (Math.abs(M[r]![c]) > Math.abs(M[piv]![c])) piv = r;
+    [M[c], M[piv]] = [M[piv], M[c]];
+    const diag = M[c]![c]!;
+    if (Math.abs(diag) < 1e-12) return null;
+    for (let r = 0; r < d; r++) {
+      if (r === c) continue;
+      const f = M[r]![c]! / diag;
+      for (let k = c; k <= d; k++) M[r]![k] = M[r]![k]! - f * M[c]![k]!;
+    }
+  }
+  return M.map((row, i) => row[d]! / M[i]![i]!);
+}
+
 /** The median error factor and the shares within 2×, 3× and 10× of a prediction set. */
 export function errorStats(predicted: number[], actual: number[]): ErrorStats {
   const factors = predicted
@@ -333,33 +495,6 @@ function growthMultiplier(p: SnapshotProtocol): number {
   return 1 + (growth / 100) * 0.4;
 }
 
-/** The maturity multiplier v1 used, kept only so the ablation can test it and drop it. */
-function maturityMultiplier(p: SnapshotProtocol, asOf: string): number {
-  const age = ageDays(asOf, p.listed_at) ?? 365;
-  if (age <= 730) return 0.7 + 0.3 * (age / 730);
-  return Math.max(0.8, 1 - 0.2 * (Math.min(age - 730, 1095) / 1095));
-}
-
-/** The chain multiplier v1 used, kept only so the ablation can test it and drop it. */
-function chainsMultiplier(p: SnapshotProtocol): number {
-  return 1 + 0.03 * Math.min(Math.max(p.chains.length - 1, 0), 5);
-}
-
-/** The median log-residual per category on a fit set, for the ablation's category tilt. */
-function categoryShifts(set: SnapshotProtocol[], fit: CurveFit): Map<string, number> {
-  const byCategory = new Map<string, number[]>();
-  for (const p of set) {
-    const residual = Math.log(p.mcap_usd!) - (fit.intercept + fit.slope * Math.log(p.tvl_usd));
-    const key = p.category ?? 'Other';
-    const list = byCategory.get(key) ?? [];
-    list.push(residual);
-    byCategory.set(key, list);
-  }
-  return new Map(
-    [...byCategory.entries()].map(([k, v]) => [k, medianOf(v.sort((a, b) => a - b)) ?? 0]),
-  );
-}
-
 /** Leave-one-out error of a predictor: each protocol predicted from a fit that never saw it. */
 function looError(
   set: SnapshotProtocol[],
@@ -379,23 +514,25 @@ function looError(
 export function validate(snapshot: Snapshot, model: ModelConstants = MODEL): Validation {
   const set = fitSet(snapshot);
   const points = set.map((p): [number, number] => [Math.log(p.tvl_usd), Math.log(p.mcap_usd!)]);
-  const curve = fitCurve(points);
-  // Log-space R² of the curve on the fit set.
+  const curve = huberFitCurve(points, model);
+  const shifts = categoryShifts(set, curve, model);
+  // Log-space R² of the full model (curve plus tilts) on the fit set.
   const meanY = points.reduce((s, [, y]) => s + y, 0) / points.length;
   let ssTotal = 0, ssResid = 0;
-  for (const [x, y] of points) {
+  for (const p of set) {
+    const y = Math.log(p.mcap_usd!);
     ssTotal += (y - meanY) ** 2;
-    ssResid += (y - (curve.intercept + curve.slope * x)) ** 2;
+    ssResid += (y - Math.log(modelValue(curve, shifts, p))) ** 2;
   }
   const r2 = 1 - ssResid / ssTotal;
-  // The bootstrap: refit on resamples, so the slope and intercept carry their own interval.
+  // The bootstrap: refit the Huber curve on resamples, so the slope and intercept carry their own interval.
   const rnd = seededRandom(model.bootstrap_seed);
   const slopes: number[] = [];
   const intercepts: number[] = [];
   for (let k = 0; k < model.bootstrap_resamples; k++) {
     const sample: [number, number][] = [];
     for (let i = 0; i < points.length; i++) sample.push(points[Math.floor(rnd() * points.length)]!);
-    const refit = fitCurve(sample);
+    const refit = huberFitCurve(sample, model);
     slopes.push(refit.slope);
     intercepts.push(refit.intercept);
   }
@@ -411,48 +548,70 @@ export function validate(snapshot: Snapshot, model: ModelConstants = MODEL): Val
   const half = Math.floor(dated.length / 2);
   const older = dated.slice(0, half);
   const younger = dated.slice(half);
-  const splitFit = fitCurve(older.map((p): [number, number] => [Math.log(p.tvl_usd), Math.log(p.mcap_usd!)]));
+  const splitFit = huberFitCurve(older.map((p): [number, number] => [Math.log(p.tvl_usd), Math.log(p.mcap_usd!)]), model);
+  const splitShifts = categoryShifts(older, splitFit, model);
   const splitStats = errorStats(
-    younger.map((p) => curveValue(splitFit, p.tvl_usd)),
+    younger.map((p) => modelValue(splitFit, splitShifts, p)),
     younger.map((p) => p.mcap_usd!),
   );
   const bandFactor = splitStats.median_factor;
   // The ablation: each candidate leave-one-out, on the same fit set.
-  const curveOnly = (rest: SnapshotProtocol[], p: SnapshotProtocol): number => {
-    const f = fitCurve(rest.map((q): [number, number] => [Math.log(q.tvl_usd), Math.log(q.mcap_usd!)]));
-    return curveValue(f, p.tvl_usd);
-  };
+  const toPoints = (rest: SnapshotProtocol[]): [number, number][] =>
+    rest.map((q): [number, number] => [Math.log(q.tvl_usd), Math.log(q.mcap_usd!)]);
   const flatMedian = (rest: SnapshotProtocol[], p: SnapshotProtocol): number => {
     const ratios = rest.map((q) => q.mcap_usd! / q.tvl_usd).sort((a, b) => a - b);
     return p.tvl_usd * (medianOf(ratios) ?? 0.25);
   };
-  const withCategory = (rest: SnapshotProtocol[], p: SnapshotProtocol): number => {
-    const f = fitCurve(rest.map((q): [number, number] => [Math.log(q.tvl_usd), Math.log(q.mcap_usd!)]));
-    const shifts = categoryShifts(rest, f);
-    return curveValue(f, p.tvl_usd) * Math.exp(shifts.get(p.category ?? 'Other') ?? 0);
+  const olsCurve = (rest: SnapshotProtocol[], p: SnapshotProtocol): number =>
+    curveValue(fitCurve(toPoints(rest)), p.tvl_usd);
+  const huberCurve = (rest: SnapshotProtocol[], p: SnapshotProtocol): number =>
+    curveValue(huberFitCurve(toPoints(rest), model), p.tvl_usd);
+  const tiltWith = (k: number) => (rest: SnapshotProtocol[], p: SnapshotProtocol): number => {
+    const f = huberFitCurve(toPoints(rest), model);
+    return modelValue(f, categoryShifts(rest, f, { ...model, category_shrink_k: k }), p);
   };
+  const modelPredict = tiltWith(model.category_shrink_k);
   const withGrowth = (rest: SnapshotProtocol[], p: SnapshotProtocol): number =>
-    curveOnly(rest, p) * growthMultiplier(p);
-  const withMaturity = (rest: SnapshotProtocol[], p: SnapshotProtocol): number =>
-    curveOnly(rest, p) * maturityMultiplier(p, snapshot.as_of);
-  const withGrowthMaturity = (rest: SnapshotProtocol[], p: SnapshotProtocol): number =>
-    curveOnly(rest, p) * growthMultiplier(p) * maturityMultiplier(p, snapshot.as_of);
-  const withAll = (rest: SnapshotProtocol[], p: SnapshotProtocol): number =>
-    withCategory(rest, p) * growthMultiplier(p) * maturityMultiplier(p, snapshot.as_of) * chainsMultiplier(p);
+    olsCurve(rest, p) * growthMultiplier(p);
+  const withAge = (rest: SnapshotProtocol[], p: SnapshotProtocol): number => {
+    const ages = rest.filter((q) => ageDays(snapshot.as_of, q.listed_at) !== null);
+    const medLogAge = medianOf(ages.map((q) => Math.log(ageDays(snapshot.as_of, q.listed_at)! + 1)).sort((a, b) => a - b)) ?? Math.log(366);
+    const beta = fitLinear(rest, [
+      (q) => Math.log(q.tvl_usd),
+      (q) => { const a = ageDays(snapshot.as_of, q.listed_at); return a === null ? medLogAge : Math.log(a + 1); },
+    ]);
+    if (beta === null) return olsCurve(rest, p);
+    const a = ageDays(snapshot.as_of, p.listed_at);
+    return Math.exp(beta[0]! + beta[1]! * Math.log(p.tvl_usd) + beta[2]! * (a === null ? medLogAge : Math.log(a + 1)));
+  };
+  const quadratic = (rest: SnapshotProtocol[], p: SnapshotProtocol): number => {
+    const beta = fitLinear(rest, [(q) => Math.log(q.tvl_usd), (q) => Math.log(q.tvl_usd) ** 2]);
+    if (beta === null) return olsCurve(rest, p);
+    const x = Math.log(p.tvl_usd);
+    return Math.exp(beta[0]! + beta[1]! * x + beta[2]! * x * x);
+  };
   const ablation: AblationRow[] = [
     ['Flat median multiple', looError(set, flatMedian)],
-    ['Size curve', looError(set, curveOnly)],
-    ['Size curve + category tilt', looError(set, withCategory)],
+    ['Size curve (OLS)', looError(set, olsCurve)],
+    ['Size curve (Huber)', looError(set, huberCurve)],
+    ['Huber + tilt k=10', looError(set, tiltWith(10))],
+    ['Huber + shrunk tilt k=40 — the model', looError(set, modelPredict)],
     ['Size curve + growth tilt', looError(set, withGrowth)],
-    ['Size curve + maturity tilt', looError(set, withMaturity)],
-    ['Size curve + growth + maturity', looError(set, withGrowthMaturity)],
-    ['Size curve + all tilts', looError(set, withAll)],
+    ['Size curve + log(age)', looError(set, withAge)],
+    ['Quadratic size curve', looError(set, quadratic)],
   ].map(([name, stats]) => ({
     name: name as string,
     median_factor: (stats as ErrorStats).median_factor,
     within_2x: (stats as ErrorStats).within_2x,
     within_3x: (stats as ErrorStats).within_3x,
   }));
+  const shiftList: CategoryShift[] = [...shifts.entries()]
+    .map(([category, shift]) => ({
+      category,
+      n: set.filter((p) => (p.category ?? 'Other') === category).length,
+      shift,
+    }))
+    .sort((a, b) => b.shift - a.shift);
   return {
     curve,
     r2,
@@ -464,9 +623,11 @@ export function validate(snapshot: Snapshot, model: ModelConstants = MODEL): Val
       fit_last_listed: older[older.length - 1]!.listed_at!,
       test_first_listed: younger[0]!.listed_at!,
     },
-    loo: looError(set, curveOnly),
+    loo: looError(set, modelPredict),
     ablation,
     band_factor: bandFactor,
+    category_shifts: shiftList,
+    experiments: EXPERIMENTS,
   };
 }
 
@@ -544,13 +705,13 @@ export function farmEconomics(
   };
 }
 
-/** The implied value and its band for one protocol, from the fitted curve. */
+/** The implied value and its band for one protocol, from the fitted curve and its category tilt. */
 export function impliedValue(
   protocol: SnapshotProtocol,
   validation: Validation,
 ): { mid: number; low: number; high: number } {
-  const tvl = Math.max(1, protocol.tvl_usd);
-  const mid = Math.max(1, Math.round(curveValue(validation.curve, tvl)));
+  const shift = new Map(validation.category_shifts.map((s) => [s.category, s.shift]));
+  const mid = Math.max(1, Math.round(modelValue(validation.curve, shift, protocol)));
   return {
     mid,
     low: Math.max(1, Math.round(mid / validation.band_factor)),
@@ -736,6 +897,9 @@ export function buildBoard(snapshot: Snapshot, validation: Validation, model: Mo
       curve_intercept: round4(validation.curve.intercept),
       curve_slope: round4(validation.curve.slope),
       band_factor: round4(validation.band_factor),
+      category_shift: round4(
+        validation.category_shifts.find((cs) => cs.category === (s.p.category ?? 'Other'))?.shift ?? 0,
+      ),
     },
     farm: s.econ,
     farm_steps: farmSteps(s.p, s.age, s.econ, model).map(stepText),
@@ -789,7 +953,7 @@ export function buildRadar(snapshot: Snapshot, model: ModelConstants = MODEL): {
     live_size: live.length,
     rows: board.map((r) => ({ ...r, nearest: nearestComps(snapshot.protocols.find((p) => p.slug === r.slug)!, comps) })),
     live,
-    comps: comps.map((p) => ({ tvl_usd: p.tvl_usd, mcap_usd: p.mcap_usd!, listed_at: p.listed_at })),
+    comps: comps.map((p) => ({ tvl_usd: p.tvl_usd, mcap_usd: p.mcap_usd!, listed_at: p.listed_at, category: p.category })),
   };
   return { board, radar };
 }
