@@ -29,26 +29,39 @@ bytes.
 
 <sub>Entered on [make.fun](https://make.fun/?ref=x5za685e&utm_source=github&utm_medium=readme&utm_campaign=token-radar-01) · AI agents build software for cash rewards</sub>
 
-## The model (radar-2)
+## The model (radar-3)
 
-Implied value is calibrated, not asserted. The snapshot's own live-token
-protocols tell us what the market pays for a dollar of TVL: for each
-category, the median market-cap-to-TVL ratio of the protocols in that
-category whose token trades (at least three of them, else the global
-median of × 0.2138), clamped to × 0.02 … × 1.5. A protocol's implied value
-is its TVL at that ratio, adjusted for its seven-day TVL growth
-(dampened, clamped to −50% … +100%), for how long it has run with no
-token on record (a hump: × 0.70 at listing, × 1.00 at two years, easing
-to × 0.80 after), and for how many chains it runs on (up to × 1.15).
+Implied value is a size curve, fitted and tested, not asserted. The
+snapshot's own traded protocols tell us what the market pays for a dollar
+of TVL, and the relationship is a curve, not a flat ratio: log(market cap)
+= 7.79 + 0.47 × log(TVL), fitted by ordinary least squares on the 119
+traded protocols outside the centralised-exchange category. A launch is
+priced as a range, not a point: the band around each implied value is the
+model's own measured error, the time-split median error factor of ×2.81.
 
-The board covers all 40 watchlist slugs plus 138 early finds — pre-token
-protocols below the $50M floor that pass the watchlist's own exclusion
-rules, so no wrapped or staked product of a token that already trades is
-ever presented as a launch candidate. Protocols whose token already
-trades are set aside on a Live tab with the market cap the market
-itself sets. Every row carries a six-step farm plan with what it costs
-and how long it takes, derived from the protocol's own category, chains,
-TVL and age.
+The curve is tested before it is trusted. A time split fits the older half
+of the traded protocols by listing date and predicts the younger half:
+median error ×2.81, 45% within 2×, 50% within 3×. A leave-one-out
+ablation refits the curve 119 times and tests every extra factor —
+category, growth, maturity, all of them together — and none of them earns
+its place: the curve alone (leave-one-out median ×3.36) beats the curve
+plus any tilt, so the model is the curve alone. The page refits the curve
+from the traded protocols itself, and every number on screen is the page's
+own arithmetic.
+
+The board covers all 198 rankable protocols — all 40 watchlist slugs plus
+every other pre-token protocol that passes the watchlist's own exclusion
+rules — so no wrapped or staked product of a token that already trades is
+presented as a launch candidate. Protocols whose token already trades are
+set aside on a Live tab with the market cap the market itself sets.
+
+Every row carries a $1,000 farm plan, the same size for every protocol so
+the rows can be compared. A wallet's allocation is the low end of the band
+shared by 40,000 farming wallets. The plan's cost is what it burns: the
+gas its steps spend, plus the yield the $1,000 forgoes at 4% a year. The
+$1,000 is a deposit, returned on exit. Net is gross minus cost: FARM when
+it clears $100, THIN when it is positive but under $100, SKIP when it is
+zero or negative. The board's verdicts are FARM 30 · THIN 128 · SKIP 40.
 
 ## Files
 
@@ -57,11 +70,12 @@ TVL and age.
 - `lib/model.ts` — the model, the farm plans and the snapshot parser.
 - `vendor/makefun-board.ts` — make.fun's dossier library (copied as-is).
 - `dashboard/` — `index.html`, `app.css`, `app.js`: the page. Sortable
-  and filterable board, an inline detail view per protocol with the
-  model's breakdown and its farm plan, a Live tab, and the calibration
-  table the model runs on.
-- `screenshots/` — three renders of the dashboard: the board, a detail
-  view and a filtered view.
+  and filterable board with verdicts and net dollars, an inline detail
+  view per protocol with its band, its nearest traded tokens and its
+  netted farm plan, a Live tab, and a Model tab with the curve, the
+  validation and the ablation.
+- `screenshots/` — four renders of the dashboard: the board, a detail
+  view, a filtered view, and the model and validation view.
 
 ## License
 
